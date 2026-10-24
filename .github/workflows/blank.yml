@@ -1,18 +1,58 @@
 name: build
-on: [push, workflow_dispatch]
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to publish the jar as a GitHub Release
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: unzip -q DonutMM-source.zip
+
+      # Phone-friendly: if you uploaded the source .zip without unzipping it, unpack it here.
+      - name: Unpack uploaded zip (if any)
+        run: |
+          if [ -z "$(find . -name settings.gradle -not -path './.git/*' | head -1)" ]; then
+            for z in *.zip; do if [ -f "$z" ]; then unzip -q -o "$z" -d _src; fi; done
+          fi
+          true
+
+      - name: Locate project
+        id: proj
+        run: |
+          f=$(find . -name settings.gradle -not -path './.git/*' | head -1)
+          [ -n "$f" ] || { echo "settings.gradle not found"; exit 1; }
+          echo "dir=$(dirname "$f")" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 21 }
+
       - uses: gradle/actions/setup-gradle@v4
-        with: { gradle-version: "9.2.1" }
-      - run: gradle build --no-daemon
-        working-directory: donutmm
+        with: { gradle-version: "8.12.1" }
+
+      - name: Build
+        working-directory: ${{ steps.proj.outputs.dir }}
+        run: gradle build --no-daemon --stacktrace
+
+      - name: Collect jar
+        run: |
+          mkdir -p dist
+          cp "${{ steps.proj.outputs.dir }}"/build/libs/donutmm-*[0-9].jar dist/
+          ls -l dist
+
       - uses: actions/upload-artifact@v4
         with:
           name: DonutMM-jar
-          path: donutmm/build/libs/donutmm-1.0.0.jar
+          path: dist/*.jar
+
+      # Also attaches the jar to a Release so you can download it straight from the Releases page (works on mobile).
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: DonutMM build ${{ github.run_number }}
+          files: dist/*.jar
+          
